@@ -15,7 +15,7 @@ TITLE = 'Game'  # Потом заменить имя приложения
 
 class OptionsScene(ar.View):
     def __init__(self, window):
-        super().__init__(window, ar.color.BLUE_SAPPHIRE) # Поменять цвет на фон
+        super().__init__(window, ar.color.BLUE_SAPPHIRE)# Поменять цвет на фон
         global screen_width, screen_height
         self.scale_x, self.scale_y = screen_width / 800, screen_height / 600
         self.window = window
