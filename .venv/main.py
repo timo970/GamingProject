@@ -1,5 +1,7 @@
 import random
-
+from arcade import Camera2D
+import io
+import arcade
 import arcade as ar
 from PIL import Image, ImageDraw
 from PIL.ImageOps import scale
@@ -44,31 +46,31 @@ class OptionsScene(ar.View):
         )
         self.main_button = UIFlatButton(
             text='Выйти в главное меню',
-            x=50 * scale,
-            y=200 * scale,
-            height=40,
-            width=250,
-            font_size=20 * scale,
+            x=50 * self.scale_x,
+            y=200 * self.scale_y,
+            height=40 * self.scale_x,
+            width=250 * self.scale_y,
+            font_size=20 * self.scale_y,
             align='center',
             text_color=ar.color.WHITE
         )
         self.random_color_background = UIFlatButton(
             text='Сменить цвет фона',
-            x=350 * scale,
-            y=200 * scale,
-            height=40,
-            width=160,
-            font_size=20 * scale,
+            x=350 * self.scale_x,
+            y=200 * self.scale_y,
+            height=40 * self.scale_x,
+            width=160 * self.scale_y,
+            font_size=20 * self.scale_y,
             align='center',
             text_color=ar.color.WHITE,
         )
         self.set_default_color = UIFlatButton(
             text='Начальный фон',
-            x=600 * scale,
-            y=200 * scale,
-            height=40,
-            width=150,
-            font_size=20 * scale,
+            x=600 * self.scale_x,
+            y=200 * self.scale_y,
+            height=40 * self.scale_x,
+            width=150 * self.scale_y,
+            font_size=20 * self.scale_y,
             align='center',
             text_color=ar.color.WHITE
         )
@@ -313,6 +315,7 @@ class FirstScene(ar.View):
             width=230 * self.scale_x,
             height=31 * self.scale_y
         )
+        play_button.on_click = self.start_game
         exit_button.on_click = self.exit
         options_button.on_click = self.options
         autors_button.on_click = self.autors
@@ -336,6 +339,12 @@ class FirstScene(ar.View):
 
     def autors(self, event):
         self.window.show_view_new(AutorsScene(self.window))
+
+    def start_game(self, event):
+        # Включаем игровой режим в основном окне
+        self.window.game_mode = True
+        # Возвращаем управление основному окну
+        self.window.show_view_new(self)
 
 
 class AutorsScene(ar.View):
@@ -412,6 +421,104 @@ class AutorsScene(ar.View):
             self.window.show_view_new(self.window.sub_view(self.window))
         return True
 
+class AnimatedPlayer(arcade.Sprite):
+    """
+    Анимация игрока без AnimatedTimeBasedSprite.
+    Поддерживает стояние и бег (GIF) с переворотом влево.
+    """
+
+    def __init__(self, scale=1.0):
+        super().__init__(scale=scale)
+
+        # --- Стояние с прозрачным фоном ---
+        stand_image = Image.open("images_for_game/PMCStand.bmp").convert("RGBA")
+
+        # ---- делаем белый цвет прозрачным ----
+        datas = stand_image.getdata()
+        newData = []
+        for item in datas:
+            if item[0] > 240 and item[1] > 240 and item[2] > 240:
+                newData.append((255, 255, 255, 0))
+            else:
+                newData.append(item)
+        stand_image.putdata(newData)
+
+        # превращаем в texture для arcade
+        buf = io.BytesIO()
+        stand_image.save(buf, format="PNG")
+        buf.seek(0)
+        self.stand_texture = arcade.load_texture(buf)
+        self.texture = self.stand_texture
+
+        # --- Бег (GIF → два списка текстур: вправо и влево) ---
+        self.run_textures_right = []
+        self.run_textures_left = []
+
+        gif = Image.open("images_for_game/KahkisRun.gif")
+        for i in range(gif.n_frames):
+            gif.seek(i)
+            frame = gif.convert("RGBA")
+
+            # ---- делаем белый цвет прозрачным ----
+            datas = frame.getdata()
+            newData = []
+            for item in datas:
+                # если почти белый, делаем прозрачным
+                if item[0] > 240 and item[1] > 240 and item[2] > 240:
+                    newData.append((255, 255, 255, 0))
+                else:
+                    newData.append(item)
+            frame.putdata(newData)
+
+            # обычный кадр (вправо)
+            buf = io.BytesIO()
+            frame.save(buf, format="PNG")
+            buf.seek(0)
+            tex_right = arcade.load_texture(buf)
+            self.run_textures_right.append(tex_right)
+
+            # зеркальный кадр (влево)
+            frame_left = frame.transpose(Image.FLIP_LEFT_RIGHT)
+            buf_left = io.BytesIO()
+            frame_left.save(buf_left, format="PNG")
+            buf_left.seek(0)
+            tex_left = arcade.load_texture(buf_left)
+            self.run_textures_left.append(tex_left)
+
+        # --- Состояние анимации ---
+        self.state = "stand"
+        self.current_frame = 0
+        self.frame_timer = 0
+        self.frame_duration = 100  # мс на кадр
+
+        # --- Направление ---
+        self.facing_right = True
+
+    # --- переключение состояния ---
+    def run(self):
+        self.state = "run"
+
+    def stand(self):
+        self.state = "stand"
+        self.texture = self.stand_texture
+
+    # --- обновление анимации ---
+    def update_animation(self, delta_time: float):
+        if self.state == "run":
+            self.frame_timer += delta_time * 1000
+            if self.frame_timer >= self.frame_duration:
+                self.frame_timer = 0
+                self.current_frame = (self.current_frame + 1) % len(self.run_textures_right)
+
+                # выбираем направление
+                if self.facing_right:
+                    self.texture = self.run_textures_right[self.current_frame]
+                else:
+                    self.texture = self.run_textures_left[self.current_frame]
+
+    # --- установка направления ---
+    def set_direction(self, right: bool):
+        self.facing_right = right
 
 class Game(ar.Window):
 
@@ -420,20 +527,97 @@ class Game(ar.Window):
         self.first_scene = FirstScene(self)
         self.options_view = OptionsScene(self)
         self.sub_view = self.first_scene.__class__
+        self.game_mode = False
         self.pres_view = self.first_scene.__class__
         self.show_view_new(self.first_scene)
         self.sub_view = self.first_scene
         self.on_resize_old = self.on_resize
+        # ===== Игрок =====
+        self.player = AnimatedPlayer(scale=1)
+        self.player.center_x = screen_width // 2
+        self.player.center_y = screen_height // 2
 
-#    def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
-#        self.on_resize_old(SCREEN_WIDTH, SCREEN_HEIGHT)
+        # Список спрайтов
+        self.player_list = arcade.SpriteList()
+        self.player_list.append(self.player)
+
+        # ===== КАМЕРА Camera2D =====
+        self.camera = ar.camera.Camera2D(
+            position=(self.player.center_x, self.player.center_y)
+        )
+        # ========================================
+
+        # Флаги движения
+        self.moving_left = False
+        self.moving_right = False
+        self.speed = 200  # пикселей в секунду
+
+
+    #def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
+#       self.on_resize_old(SCREEN_WIDTH, SCREEN_HEIGHT)
 
     def show_view_new(self, new_view: View) -> None:
         self.sub_view = self.pres_view
         self.pres_view = new_view.__class__
         self.show_view(new_view)
 
+        # ===== Отрисовка =====
 
-if __name__ == '__main__':
-    game = Game()
-    game.run()
+    def on_draw(self):
+        self.clear()
+        if self.game_mode:
+            self.camera.use()
+            self.player_list.draw()
+        else:
+            # Рисуем текущую сцену (меню)
+            if self.current_view:
+                self.current_view.on_draw()
+
+
+
+        # ===== Обновление =====
+
+    def on_update(self, delta_time):
+        if self.game_mode:
+            # Обновляем игровую логику
+            if self.moving_left:
+                self.player.center_x -= self.speed * delta_time
+                self.player.set_direction(False)
+            if self.moving_right:
+                self.player.center_x += self.speed * delta_time
+                self.player.set_direction(True)
+
+            if self.moving_left or self.moving_right:
+                self.player.run()
+            else:
+                self.player.stand()
+
+            # Камера следует за игроком
+            target_x = self.player.center_x
+            target_y = self.player.center_y
+            self.camera.position = (
+                self.camera.position[0] + (target_x - self.camera.position[0]) * 0.1,
+                self.camera.position[1] + (target_y - self.camera.position[1]) * 0.1
+            )
+
+            self.player_list.update_animation(delta_time)
+
+        # ===== Нажатие клавиши =====
+
+    def on_key_press(self, symbol: int, modifiers: int):
+        if symbol == arcade.key.A:
+            self.moving_left = True
+        elif symbol == arcade.key.D:
+            self.moving_right = True
+
+        # ===== Отпуск клавиши =====
+
+    def on_key_release(self, symbol: int, modifiers: int):
+        if symbol == arcade.key.A:
+            self.moving_left = False
+        elif symbol == arcade.key.D:
+            self.moving_right = False
+
+if __name__ == "__main__":
+    window = Game()  # Создаём окно
+    arcade.run()
