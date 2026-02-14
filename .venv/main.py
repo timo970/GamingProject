@@ -422,10 +422,6 @@ class AutorsScene(ar.View):
         return True
 
 class AnimatedPlayer(arcade.Sprite):
-    """
-    Анимация игрока без AnimatedTimeBasedSprite.
-    Поддерживает стояние и бег (GIF) с переворотом влево.
-    """
 
     def __init__(self, scale=1.0):
         super().__init__(scale=scale)
@@ -500,7 +496,10 @@ class AnimatedPlayer(arcade.Sprite):
 
     def stand(self):
         self.state = "stand"
-        self.texture = self.stand_texture
+        if self.facing_right:
+            self.texture = self.stand_texture
+        else:
+            self.texture = self.stand_texture.flip_horizontally()
 
     # --- обновление анимации ---
     def update_animation(self, delta_time: float):
@@ -519,11 +518,34 @@ class AnimatedPlayer(arcade.Sprite):
     # --- установка направления ---
     def set_direction(self, right: bool):
         self.facing_right = right
+        if self.state == "stand":
+            self.stand()
+
+class Bullet(arcade.Sprite):
+    def __init__(self, texture: arcade.Texture, start_x: float, start_y: float, facing_right: bool, speed: float = 500):
+        super().__init__(texture, scale=1.0)
+        self.center_x = start_x + 20
+        self.center_y = start_y + 25
+        self.speed = speed
+
+        if facing_right:
+            self.change_x = self.speed  # летит вправо
+            self.angle = 0
+        else:
+            self.change_x = -self.speed  # летит влево
+            self.angle = 180
+
+        self.change_y = 0
+
+    def update(self, delta_time: float):
+        self.center_x += self.change_x * delta_time
+        self.center_y += self.change_y * delta_time
 
 class Game(ar.Window):
 
     def __init__(self):
         super().__init__(screen_width, screen_height, TITLE)
+        arcade.set_background_color(arcade.color.TEA_GREEN)
         self.first_scene = FirstScene(self)
         self.options_view = OptionsScene(self)
         self.sub_view = self.first_scene.__class__
@@ -533,13 +555,34 @@ class Game(ar.Window):
         self.sub_view = self.first_scene
         self.on_resize_old = self.on_resize
         # ===== Игрок =====
-        self.player = AnimatedPlayer(scale=1)
+        self.player = AnimatedPlayer(scale=1.5)
         self.player.center_x = screen_width // 2
         self.player.center_y = screen_height // 2
 
         # Список спрайтов
         self.player_list = arcade.SpriteList()
         self.player_list.append(self.player)
+
+        # Платформа
+        self.platform = arcade.SpriteSolidColor(
+            width = 700,
+            height = 20,
+            color = arcade.color.BLACK
+         )
+        self.platform1 = arcade.SpriteSolidColor(
+            width=400,
+            height=20,
+            color=arcade.color.BLACK
+        )
+        self.platform.center_x = screen_width // 2
+        self.platform.center_y = screen_height // 2 - 30
+
+        self.platform1.center_x = screen_width // 2 + 300
+        self.platform1.center_y = screen_height // 2 + 200
+
+        self.platform_list = arcade.SpriteList()
+        self.platform_list.append(self.platform)
+        self.platform_list.append(self.platform1)
 
         # ===== КАМЕРА Camera2D =====
         self.camera = ar.camera.Camera2D(
@@ -550,11 +593,25 @@ class Game(ar.Window):
         # Флаги движения
         self.moving_left = False
         self.moving_right = False
+        self.jump = False
         self.speed = 200  # пикселей в секунду
+
+        self.is_jumping = False
+        self.vertical_speed = 0
+        self.gravity = 1000
+        self.jump_strength = 700
+        self.ground_level = screen_height // 2 - 10
+
+        self.bullet_list = arcade.SpriteList()  # Список для хранения всех пуль
+        try:
+            self.bullet_texture = arcade.load_texture("images_for_game/bullet.png")
+        except FileNotFoundError:
+            print("Файл images_for_game/bullet.png не найден.")
+            self.bullet_texture = None
 
 
     #def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
-#       self.on_resize_old(SCREEN_WIDTH, SCREEN_HEIGHT)
+#       self.on_resize_old(screen_width, screen_height)
 
     def show_view_new(self, new_view: View) -> None:
         self.sub_view = self.pres_view
@@ -567,7 +624,9 @@ class Game(ar.Window):
         self.clear()
         if self.game_mode:
             self.camera.use()
+            self.platform_list.draw()
             self.player_list.draw()
+            self.bullet_list.draw()
         else:
             # Рисуем текущую сцену (меню)
             if self.current_view:
@@ -592,6 +651,37 @@ class Game(ar.Window):
             else:
                 self.player.stand()
 
+            self.vertical_speed -= self.gravity * delta_time
+
+            # Изменяем позицию по Y
+            self.player.center_y += self.vertical_speed * delta_time
+
+            collisions = self.player.collides_with_list(self.platform_list)
+            if collisions:
+                if self.vertical_speed < 0:
+                    platform = collisions[0]
+                    self.player.center_y = platform.center_y + platform.height / 2 + self.player.height / 2
+                    self.vertical_speed = 0
+                    self.is_jumping = False
+
+            if self.jump and not self.is_jumping:
+                self.vertical_speed = self.jump_strength
+                self.is_jumping = True
+
+            left_boundary = self.camera.position[0] - screen_width // 2
+            right_boundary = self.camera.position[0] + screen_width // 2
+            bottom_boundary = self.camera.position[1] - screen_height // 2
+
+            if (self.player.center_y < bottom_boundary - 100 or
+                    self.player.center_x < left_boundary - 200 or
+                    self.player.center_x > right_boundary + 200):
+
+                self.player.center_x = self.platform.center_x
+                self.player.center_y = self.platform.center_y + self.platform.height / 2 + self.player.height / 2
+                self.vertical_speed = 0
+                self.is_jumping = False
+                print("Игрок восстановлен на платформе!")  # Для отладки*
+
             # Камера следует за игроком
             target_x = self.player.center_x
             target_y = self.player.center_y
@@ -602,22 +692,55 @@ class Game(ar.Window):
 
             self.player_list.update_animation(delta_time)
 
-        # ===== Нажатие клавиши =====
+            self.bullet_list.update(delta_time)
 
+            camera_left = self.camera.position[0] - screen_width // 2 - 100
+            camera_right = self.camera.position[0] + screen_width // 2 + 100
+            bullets_to_remove = []
+            for bullet in self.bullet_list:
+                if bullet.center_x < camera_left or bullet.center_x > camera_right:
+                    bullets_to_remove.append(bullet)
+
+            # Удаляем их после цикла
+            for bullet in bullets_to_remove:
+                bullet.remove_from_sprite_lists()
+
+
+    # ===== Нажатие клавиши =====
     def on_key_press(self, symbol: int, modifiers: int):
         if symbol == arcade.key.A:
             self.moving_left = True
+            self.player.set_direction(False)
         elif symbol == arcade.key.D:
             self.moving_right = True
+            self.player.set_direction(True)
+        if symbol == arcade.key.SPACE:
+            self.jump = True
 
-        # ===== Отпуск клавиши =====
 
+    # ===== Отпуск клавиши =====
     def on_key_release(self, symbol: int, modifiers: int):
         if symbol == arcade.key.A:
             self.moving_left = False
+            self.player.set_direction(False)
         elif symbol == arcade.key.D:
             self.moving_right = False
+            self.player.set_direction(True)
+        if symbol == arcade.key.SPACE:
+            self.jump = False
 
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
+        if self.game_mode and button == arcade.MOUSE_BUTTON_LEFT:
+            if self.bullet_texture:
+                bullet = Bullet(
+                    texture=self.bullet_texture,
+                    start_x=self.player.center_x,
+                    start_y=self.player.center_y,
+                    facing_right=self.player.facing_right,
+                    speed=600
+                )
+
+                self.bullet_list.append(bullet)
 if __name__ == "__main__":
     window = Game()  # Создаём окно
     arcade.run()
